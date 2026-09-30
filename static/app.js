@@ -8,6 +8,9 @@
     reader: document.getElementById("reader"),
     longCanvas: document.getElementById("longCanvas"),
     singleCanvas: document.getElementById("singleCanvas"),
+    chapterEndNav: document.getElementById("chapterEndNav"),
+    chapterEndPrevious: document.getElementById("chapterEndPrevious"),
+    chapterEndNext: document.getElementById("chapterEndNext"),
     emptyState: document.getElementById("emptyState"),
     seriesHeading: document.getElementById("seriesHeading"),
     chapterHeading: document.getElementById("chapterHeading"),
@@ -164,6 +167,16 @@
     refs.pageCounter.textContent = total ? `${String(state.activeIndex + 1).padStart(2, "0")} / ${String(total).padStart(2, "0")}` : "— / —";
   }
 
+  function updateChapterEndNav() {
+    const hasChapter = Boolean(state.currentChapter && state.currentSeries);
+    refs.chapterEndNav.hidden = !hasChapter;
+    if (!hasChapter) return;
+    const list = activeChapterList();
+    const index = list.findIndex((item) => item.id === state.currentChapter.id);
+    refs.chapterEndPrevious.disabled = index <= 0;
+    refs.chapterEndNext.disabled = index < 0 || index >= list.length - 1;
+  }
+
   function imageElement(image, title) {
     const img = document.createElement("img");
     img.loading = "lazy";
@@ -225,6 +238,7 @@
     refs.reader.classList.remove("hidden");
     updateHeading();
     if (state.mode === "single") renderSingle(); else renderLong();
+    updateChapterEndNav();
     renderSeriesList();
     renderChapterList(state.drawerSeries || state.currentSeries);
   }
@@ -258,6 +272,7 @@
       state.currentChapter = found.item;
       state.chapter = await response.json();
       state.activeIndex = savedPosition(state.currentChapter.id, state.chapter.images.length);
+      refs.stage.scrollTo({ top: 0, left: 0, behavior: "auto" });
       renderReader();
       restoreScrollPosition();
       writeProgress();
