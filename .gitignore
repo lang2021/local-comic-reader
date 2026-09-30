@@ -1,0 +1,26 @@
+# 漫画原图只在运行时从相邻目录读取，不进入代码仓库。
+/漫画/
+/media/
+/images/
+/data/
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.gif
+*.avif
+*.heic
+*.heif
+
+# Python 和本地运行产物
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+.venv/
+venv/
+
+# 编辑器与系统文件
+.DS_Store
+.idea/
+.vscode/

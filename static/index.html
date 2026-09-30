@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark light">
+    <title>本地漫画</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body class="theme-dark">
+    <div class="app-shell">
+      <header class="topbar">
+        <button class="brand-button" id="libraryToggle" type="button" aria-label="打开书库" aria-expanded="false">
+          <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          <span>本地漫画</span>
+        </button>
+        <div class="chapter-heading" aria-live="polite">
+          <span id="seriesHeading">请选择作品</span>
+          <span class="heading-separator" aria-hidden="true">·</span>
+          <span id="chapterHeading">打开目录开始阅读</span>
+        </div>
+        <div class="page-counter" id="pageCounter">— / —</div>
+      </header>
+
+      <main class="reader-stage" id="readerStage">
+        <section class="empty-state" id="emptyState">
+          <p class="empty-kicker">本地阅读</p>
+          <h1>选择一部漫画开始</h1>
+          <p>只读取本机漫画目录，不连接任何外部网站。</p>
+          <button class="text-button" id="emptyOpenLibrary" type="button">打开书库</button>
+        </section>
+
+        <section class="reader hidden" id="reader" aria-label="漫画阅读区">
+          <div class="long-canvas" id="longCanvas"></div>
+          <div class="single-canvas" id="singleCanvas"></div>
+        </section>
+      </main>
+
+      <nav class="reader-toolbar" aria-label="阅读工具">
+        <button class="tool-button" type="button" data-action="open-library" aria-label="目录" title="目录">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v4H5zM5 14.5h14v4H5z"></path></svg><span>目录</span>
+        </button>
+        <button class="tool-button is-selected" type="button" data-action="mode-long" aria-label="长卷" title="长卷">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7zM10 8h4M10 12h4M10 16h4"></path></svg><span>长卷</span>
+        </button>
+        <button class="tool-button" type="button" data-action="mode-single" aria-label="单页" title="单页">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16H6z"></path></svg><span>单页</span>
+        </button>
+        <button class="tool-button" type="button" data-action="toggle-theme" aria-label="明暗" title="明暗">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"></path></svg><span>明暗</span>
+        </button>
+        <button class="tool-button" type="button" data-action="previous-chapter" aria-label="上一话" title="上一话">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"></path></svg><span>上一话</span>
+        </button>
+        <button class="tool-button" type="button" data-action="next-chapter" aria-label="下一话" title="下一话">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"></path></svg><span>下一话</span>
+        </button>
+      </nav>
+
+      <div class="drawer-layer" id="drawerLayer" hidden>
+        <div class="drawer-backdrop" data-action="close-library"></div>
+        <aside class="library-drawer" aria-label="本地书库">
+          <header class="drawer-header">
+            <div>
+              <p class="drawer-kicker">本地书库</p>
+              <h2>作品与章节</h2>
+            </div>
+            <button class="icon-button" type="button" data-action="close-library" aria-label="关闭目录" title="关闭目录">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+          </header>
+          <div class="drawer-content">
+            <div class="series-list" id="seriesList"></div>
+            <div class="chapter-panel" id="chapterPanel">
+              <div class="panel-heading"><span>章节列表</span><span class="panel-count" id="chapterCount"></span></div>
+              <div class="chapter-list" id="chapterList"></div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="message-layer" id="messageLayer" hidden>
+        <div class="message-box" role="alert">
+          <p class="drawer-kicker">本地阅读器</p>
+          <h2 id="messageTitle">无法读取漫画目录</h2>
+          <p id="messageBody">请通过“启动漫画阅读器.command”启动，而不是直接双击 HTML 文件。</p>
+          <button class="text-button" id="messageDismiss" type="button">知道了</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
