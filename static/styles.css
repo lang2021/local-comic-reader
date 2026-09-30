@@ -85,9 +85,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .reader-stage::-webkit-scrollbar-thumb, .drawer-content::-webkit-scrollbar-thumb, .chapter-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
 
 .reader { width: 100%; padding: 0 96px 120px; }
-.long-canvas { width: min(100%, 820px); margin: 0 auto; }
-.long-canvas img { display: block; width: 100%; height: auto; margin: 0 auto; background: #111; }
-.long-canvas img + img { border-top: 1px solid #101010; }
+.long-canvas { width: min(100%, 820px); display: block; margin: 0 auto; padding: 0; gap: 0; line-height: 0; }
+.long-canvas img { display: block; width: 100%; height: auto; margin: 0; padding: 0; border: 0; vertical-align: top; background: #111; }
 .single-canvas { width: min(100%, 920px); min-height: calc(100vh - 100px); display: flex; align-items: flex-start; justify-content: center; margin: 0 auto; padding: 22px 0 80px; }
 .single-canvas img { display: block; max-width: 100%; max-height: calc(100vh - 120px); width: auto; height: auto; object-fit: contain; background: #111; }
 .single-canvas img.is-broken { padding: 56px; color: var(--muted); border: 1px solid var(--line); }
