@@ -92,7 +92,8 @@
       button.classList.toggle("is-selected", state.drawerSeries?.name === series.name);
       button.innerHTML = `<span class="series-name"></span><span class="series-meta"></span>`;
       button.querySelector(".series-name").textContent = series.name;
-      button.querySelector(".series-meta").textContent = `${series.chapters.length}话 · ${seriesImageCount(series)}页`;
+      const pendingCount = (series.unindexed || []).length;
+      button.querySelector(".series-meta").textContent = `${series.chapters.length}话 · ${seriesImageCount(series)}页${pendingCount ? ` · 待编序${pendingCount}` : ""}`;
       button.addEventListener("click", () => {
         state.drawerSeries = series;
         renderSeriesList();
@@ -119,11 +120,12 @@
     state.drawerSeries = series;
     const main = series.chapters || [];
     const appendix = series.appendix || [];
-    refs.chapterCount.textContent = `${main.length}话${appendix.length ? ` · 附录${appendix.length}` : ""}`;
+    const unindexed = series.unindexed || [];
+    refs.chapterCount.textContent = `${main.length}话${appendix.length ? ` · 附录${appendix.length}` : ""}${unindexed.length ? ` · 待编序${unindexed.length}` : ""}`;
     if (main.length) {
       const mainLabel = document.createElement("div");
       mainLabel.className = "chapter-group-label";
-      mainLabel.textContent = "正篇与特别篇";
+      mainLabel.textContent = "阅读顺序 · 序章／正篇／特别篇";
       refs.chapterList.append(mainLabel);
       main.forEach((item) => refs.chapterList.append(chapterButton(item)));
     }
@@ -134,11 +136,18 @@
       refs.chapterList.append(appendixLabel);
       appendix.forEach((item) => refs.chapterList.append(chapterButton(item)));
     }
+    if (unindexed.length) {
+      const pendingLabel = document.createElement("div");
+      pendingLabel.className = "chapter-group-label";
+      pendingLabel.textContent = "待编序 · 不参与上一话／下一话";
+      refs.chapterList.append(pendingLabel);
+      unindexed.forEach((item) => refs.chapterList.append(chapterButton(item)));
+    }
   }
 
   function findChapter(id) {
     for (const series of state.library.series) {
-      const all = [...series.chapters, ...series.appendix];
+      const all = [...series.chapters, ...series.appendix, ...(series.unindexed || [])];
       const index = all.findIndex((item) => item.id === id);
       if (index >= 0) return { series, all, index, item: all[index] };
     }

@@ -2,7 +2,7 @@
 /漫画/
 /media/
 /images/
-/data/
+# The explicit reading-order manifest is source data and must be tracked.
 *.jpg
 *.jpeg
 *.png
