@@ -5,11 +5,18 @@ from __future__ import annotations
 
 import json
 import csv
+import contextlib
 import mimetypes
 import os
 import re
 import socket
+import signal
+import secrets
+import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 import threading
 import urllib.parse
 import webbrowser
@@ -24,6 +31,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 MANGA_ROOT = (PROJECT_ROOT.parent / "漫画").resolve()
 STATIC_ROOT = (PROJECT_ROOT / "static").resolve()
 ORDER_MANIFEST = (PROJECT_ROOT / "data" / "library_order.tsv").resolve()
+RUNTIME_ROOT = (PROJECT_ROOT / ".runtime").resolve()
+RUNTIME_STATE = RUNTIME_ROOT / "reader.json"
+RUNTIME_LOG = RUNTIME_ROOT / "reader.log"
+RUNTIME_LOCK = RUNTIME_ROOT / "launch.lock"
+APP_ID = "local-comic-reader"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 APPENDIX_MARKERS = ("非剧情", "上架感言", "周日更新", "外出取材", "更新延迟", "本周休刊", "通知")
 SERIES_ORDER_HINTS = ("史上最强", "败者为寇", "我独自升级")
@@ -35,6 +47,104 @@ ORDER_KIND_MAP = {"prologue": "prologue", "main": "main", "special": "special", 
 _cache_lock = threading.Lock()
 _library_cache: dict[str, Any] | None = None
 _library_signature: tuple[Any, ...] | None = None
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Write a small runtime record without exposing a partial JSON file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def read_runtime_state() -> dict[str, Any] | None:
+    try:
+        payload = json.loads(RUNTIME_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def remove_runtime_state(instance_id: str | None = None) -> None:
+    state = read_runtime_state()
+    if instance_id is not None and state and state.get("instanceId") != instance_id:
+        return
+    try:
+        RUNTIME_STATE.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+@contextlib.contextmanager
+def runtime_lock():
+    """Serialize launcher checks so two quick double-clicks cannot spawn twice."""
+    RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    handle = RUNTIME_LOCK.open("a+", encoding="utf-8")
+    try:
+        try:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        yield
+    finally:
+        try:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            pass
+        handle.close()
+
+
+def health_at(port: int, expected_instance: str | None = None) -> dict[str, Any] | None:
+    """Return a verified reader health payload for a loopback port."""
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.6) as response:
+            if response.status != HTTPStatus.OK:
+                return None
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError, urllib.error.URLError, TimeoutError):
+        return None
+    if not isinstance(payload, dict) or payload.get("ok") is not True or payload.get("app") != APP_ID:
+        return None
+    if expected_instance is not None and payload.get("instanceId") != expected_instance:
+        return None
+    return payload
+
+
+def running_instance() -> tuple[dict[str, Any], str] | None:
+    state = read_runtime_state()
+    if not state:
+        return None
+    try:
+        port = int(state["port"])
+        pid = int(state["pid"])
+        instance_id = str(state["instanceId"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not 8767 <= port <= 8787 or pid <= 0 or not instance_id:
+        return None
+    health = health_at(port, instance_id)
+    if health is None:
+        return None
+    return state, f"http://127.0.0.1:{port}/"
+
+
+def write_runtime_state(server: "ReaderServer") -> None:
+    host, port = server.server_address
+    atomic_write_json(
+        RUNTIME_STATE,
+        {
+            "app": APP_ID,
+            "instanceId": server.instance_id,
+            "pid": os.getpid(),
+            "host": host,
+            "port": port,
+            "startedAt": int(time.time()),
+        },
+    )
 
 
 def parse_order_key(value: str) -> tuple[str, Decimal] | None:
@@ -499,6 +609,21 @@ class ReaderServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    def __init__(self, server_address: tuple[str, int], handler_class: type[BaseHTTPRequestHandler]):
+        super().__init__(server_address, handler_class)
+        self.instance_id = secrets.token_urlsafe(18)
+
+    def health_payload(self) -> dict[str, Any]:
+        host, port = self.server_address
+        return {
+            "ok": True,
+            "app": APP_ID,
+            "instanceId": self.instance_id,
+            "pid": os.getpid(),
+            "host": host,
+            "port": port,
+        }
+
 
 class ReaderHandler(BaseHTTPRequestHandler):
     server_version = "LocalComicReader/1.0"
@@ -526,7 +651,7 @@ class ReaderHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlsplit(self.path)
         route = parsed.path
         if route == "/health":
-            self.respond(HTTPStatus.OK, b'{"ok":true}', "application/json; charset=utf-8")
+            self.respond(HTTPStatus.OK, json_bytes(self.server.health_payload()), "application/json; charset=utf-8")
             return
         if route == "/api/library":
             self.respond(HTTPStatus.OK, json_bytes(scan_library()))
@@ -617,7 +742,114 @@ def choose_server() -> ReaderServer:
     raise OSError("8767—8787 均无法使用")
 
 
+def serve_background() -> None:
+    if not MANGA_ROOT.exists():
+        print(f"找不到漫画目录：{MANGA_ROOT}", file=sys.stderr)
+        raise SystemExit(2)
+    server = choose_server()
+    write_runtime_state(server)
+
+    def stop_handler(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop_handler)
+    signal.signal(signal.SIGINT, stop_handler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        remove_runtime_state(server.instance_id)
+
+
+def launch_background(open_browser: bool = True) -> str:
+    with runtime_lock():
+        existing = running_instance()
+        if existing:
+            _, url = existing
+        else:
+            remove_runtime_state()
+            RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+            log_handle = RUNTIME_LOG.open("ab")
+            try:
+                child = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).resolve()), "--serve-background"],
+                    cwd=str(PROJECT_ROOT),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            finally:
+                log_handle.close()
+            url = ""
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                current = running_instance()
+                if current:
+                    _, url = current
+                    break
+                if child.poll() is not None:
+                    break
+                time.sleep(0.1)
+            if not url:
+                raise RuntimeError(f"阅读器服务启动失败，请查看日志：{RUNTIME_LOG}")
+    if open_browser:
+        try:
+            webbrowser.open(url)
+        except Exception as exc:  # pragma: no cover - browser availability is OS-specific
+            print(f"无法自动打开浏览器，请手动访问 {url}：{exc}", file=sys.stderr)
+    print(f"本地漫画阅读器：{url}")
+    return url
+
+
+def stop_background() -> bool:
+    with runtime_lock():
+        state = read_runtime_state()
+        if not state:
+            print("没有发现正在运行的本地漫画阅读器。")
+            return False
+        try:
+            pid = int(state["pid"])
+            port = int(state["port"])
+            instance_id = str(state["instanceId"])
+        except (KeyError, TypeError, ValueError):
+            remove_runtime_state()
+            print("已清理失效的运行状态。")
+            return False
+        health = health_at(port, instance_id)
+        if health is None:
+            remove_runtime_state(instance_id)
+            print("已清理失效的运行状态。")
+            return False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            remove_runtime_state(instance_id)
+            print("服务进程已退出，已清理运行状态。")
+            return False
+        except PermissionError as exc:
+            raise RuntimeError(f"没有权限停止服务进程：{exc}") from exc
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and health_at(port, instance_id) is not None:
+            time.sleep(0.1)
+        remove_runtime_state(instance_id)
+        print("本地漫画阅读器已停止。")
+        return True
+
+
 def main() -> None:
+    if "--serve-background" in sys.argv[1:]:
+        serve_background()
+        return
+    if "--launch" in sys.argv[1:]:
+        launch_background(open_browser="--no-open" not in sys.argv[1:])
+        return
+    if "--stop" in sys.argv[1:]:
+        stop_background()
+        return
     if "--check-library" in sys.argv[1:]:
         errors, warnings = validate_order_manifest()
         for warning in warnings:
@@ -632,21 +864,8 @@ def main() -> None:
     if not MANGA_ROOT.exists():
         print(f"找不到漫画目录：{MANGA_ROOT}", file=sys.stderr)
         raise SystemExit(2)
-    server = choose_server()
-    host, port = server.server_address
-    url = f"http://{host}:{port}/"
-    print(f"本地漫画阅读器：{url}")
-    print("服务只监听本机；按 Ctrl-C 停止。")
-    try:
-        webbrowser.open(url)
-    except Exception as exc:  # pragma: no cover - browser availability is OS-specific
-        print(f"无法自动打开浏览器，请手动访问 {url}：{exc}", file=sys.stderr)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n已停止本地漫画阅读器。")
-    finally:
-        server.server_close()
+    print("请使用“启动漫画阅读器.command”启动，或传入 --launch。", file=sys.stderr)
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":

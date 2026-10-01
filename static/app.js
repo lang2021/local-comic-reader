@@ -24,6 +24,7 @@
     messageLayer: document.getElementById("messageLayer"),
     messageTitle: document.getElementById("messageTitle"),
     messageBody: document.getElementById("messageBody"),
+    messageRetry: document.getElementById("messageRetry"),
     messageDismiss: document.getElementById("messageDismiss"),
   };
 
@@ -37,6 +38,8 @@
     activeIndex: 0,
     observer: null,
     drawerSeries: null,
+    pendingChapterId: null,
+    retryAction: null,
   };
 
   function readProgress() {
@@ -55,13 +58,51 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
   }
 
-  function showMessage(title, body) {
+  function showMessage(title, body, options = {}) {
     refs.messageTitle.textContent = title;
     refs.messageBody.textContent = body;
+    state.retryAction = options.retry || null;
+    refs.messageRetry.hidden = !state.retryAction;
+    refs.messageDismiss.textContent = state.retryAction ? "关闭" : "知道了";
     refs.messageLayer.hidden = false;
   }
 
-  function hideMessage() { refs.messageLayer.hidden = true; }
+  function hideMessage() {
+    refs.messageLayer.hidden = true;
+    state.retryAction = null;
+  }
+
+  async function fetchJSON(url) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    let response;
+    try {
+      response = await fetch(url, { cache: "no-store", signal: controller.signal });
+    } catch (error) {
+      const unavailable = new Error("本地服务未运行");
+      unavailable.code = error?.name === "AbortError" ? "SERVICE_TIMEOUT" : "SERVICE_UNAVAILABLE";
+      throw unavailable;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    if (!response.ok) {
+      const failure = new Error(`服务端返回 HTTP ${response.status}`);
+      failure.code = "HTTP_ERROR";
+      failure.status = response.status;
+      throw failure;
+    }
+    try {
+      return await response.json();
+    } catch {
+      const failure = new Error("服务端返回了无效数据");
+      failure.code = "INVALID_RESPONSE";
+      throw failure;
+    }
+  }
+
+  function showServiceMessage(title, body, retry) {
+    showMessage(title, body, { retry });
+  }
 
   function setTheme(theme) {
     state.theme = theme === "light" ? "light" : "dark";
@@ -74,8 +115,9 @@
     refs.drawerLayer.hidden = !open;
     refs.libraryToggle.setAttribute("aria-expanded", String(open));
     if (open && state.library) {
+      state.drawerSeries = state.currentSeries || state.drawerSeries || state.library.series[0];
       renderSeriesList();
-      renderChapterList(state.drawerSeries || state.currentSeries || state.library.series[0]);
+      renderChapterList(state.drawerSeries);
     }
   }
 
@@ -272,29 +314,60 @@
     if (!state.library) return;
     const found = findChapter(chapterId);
     if (!found) return;
+    state.pendingChapterId = chapterId;
     refs.drawerLayer.hidden = true;
     refs.libraryToggle.setAttribute("aria-expanded", "false");
     try {
-      const response = await fetch(`/api/chapter?chapter=${encodeURIComponent(chapterId)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error("章节读取失败");
+      const chapter = await fetchJSON(`/api/chapter?chapter=${encodeURIComponent(chapterId)}`);
       state.currentSeries = found.series;
+      state.drawerSeries = found.series;
       state.currentChapter = found.item;
-      state.chapter = await response.json();
+      state.chapter = chapter;
       state.activeIndex = savedPosition(state.currentChapter.id, state.chapter.images.length);
+      state.pendingChapterId = null;
       refs.stage.scrollTo({ top: 0, left: 0, behavior: "auto" });
       renderReader();
       restoreScrollPosition();
       writeProgress();
     } catch (error) {
-      showMessage("无法读取章节", error instanceof Error ? error.message : "请刷新后重试。");
+      const isServiceError = error?.code === "SERVICE_UNAVAILABLE" || error?.code === "SERVICE_TIMEOUT";
+      showMessage(
+        isServiceError ? "本地服务已停止" : "无法读取章节",
+        isServiceError
+          ? "请重新双击“启动漫画阅读器.command”，服务恢复后点击“重新连接”。"
+          : (error instanceof Error ? error.message : "请刷新后重试。"),
+        { retry: isServiceError ? retryPending : null },
+      );
+    }
+  }
+
+  async function retryPending() {
+    const pending = state.pendingChapterId;
+    try {
+      state.library = await fetchJSON("/api/library");
+      if (pending) {
+        const found = findChapter(pending);
+        if (found) {
+          hideMessage();
+          await selectChapter(pending);
+          return;
+        }
+      }
+      hideMessage();
+      state.drawerSeries = state.currentSeries || state.library.series[0];
+      setDrawer(true);
+    } catch {
+      showServiceMessage(
+        "本地服务仍未连接",
+        "请确认已双击“启动漫画阅读器.command”，然后再次点击“重新连接”。",
+        retryPending,
+      );
     }
   }
 
   async function loadLibrary() {
     try {
-      const response = await fetch("/api/library", { cache: "no-store" });
-      if (!response.ok) throw new Error("目录服务返回异常");
-      state.library = await response.json();
+      state.library = await fetchJSON("/api/library");
       if (!state.library.series.length) {
         showMessage("没有发现漫画", "请确认漫画目录位于本工具的上一级目录，并且章节文件夹内有图片。");
         return;
@@ -312,7 +385,14 @@
         setDrawer(true);
       }
     } catch (error) {
-      showMessage("无法读取漫画目录", "请通过“启动漫画阅读器.command”启动，而不是直接双击 HTML 文件。服务端需要运行在 127.0.0.1 上。");
+      const isServiceError = error?.code === "SERVICE_UNAVAILABLE" || error?.code === "SERVICE_TIMEOUT";
+      showMessage(
+        isServiceError ? "本地服务未运行" : "无法读取漫画目录",
+        isServiceError
+          ? "请双击“启动漫画阅读器.command”启动服务，然后点击“重新连接”。"
+          : (error instanceof Error ? error.message : "请刷新后重试。"),
+        { retry: isServiceError ? retryPending : null },
+      );
     }
   }
 
@@ -349,6 +429,16 @@
   });
   refs.libraryToggle.addEventListener("click", () => setDrawer(true));
   refs.emptyOpenLibrary.addEventListener("click", () => setDrawer(true));
+  refs.messageRetry.addEventListener("click", async () => {
+    const retry = state.retryAction;
+    if (!retry) return;
+    refs.messageRetry.disabled = true;
+    try {
+      await retry();
+    } finally {
+      refs.messageRetry.disabled = false;
+    }
+  });
   refs.messageDismiss.addEventListener("click", hideMessage);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !refs.drawerLayer.hidden) setDrawer(false);

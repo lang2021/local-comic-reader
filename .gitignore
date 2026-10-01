@@ -2,6 +2,7 @@
 /漫画/
 /media/
 /images/
+/.runtime/
 # The explicit reading-order manifest is source data and must be tracked.
 *.jpg
 *.jpeg
