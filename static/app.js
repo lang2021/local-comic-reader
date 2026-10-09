@@ -143,6 +143,8 @@
       });
       refs.seriesList.append(button);
     }
+    const selected = refs.seriesList.querySelector(".series-item.is-selected");
+    if (selected) selected.scrollIntoView({ block: "nearest" });
   }
 
   function chapterButton(item) {
