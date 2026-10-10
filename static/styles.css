@@ -124,6 +124,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tool-button:disabled { opacity: .32; cursor: not-allowed; }
 .zoom-control { position: relative; }
 .zoom-control > .tool-button { width: 64px; }
+.zoom-panel[hidden] { display: none; }
 .zoom-panel { position: absolute; z-index: 2; top: 50%; right: calc(100% + 12px); display: grid; grid-template-columns: 38px 58px 38px auto; align-items: center; gap: 4px; min-width: 218px; padding: 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--toolbar-bg); box-shadow: 0 12px 30px rgba(0, 0, 0, .24); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transform: translateY(-50%); }
 .zoom-button, .zoom-reset { min-height: 38px; border: 0; border-radius: 10px; color: var(--text); background: transparent; cursor: pointer; font: inherit; }
 .zoom-button { font-size: 22px; line-height: 1; }
