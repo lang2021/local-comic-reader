@@ -55,6 +55,17 @@
         <button class="tool-button" type="button" data-action="mode-single" aria-label="单页" title="单页">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16H6z"></path></svg><span>单页</span>
         </button>
+        <div class="zoom-control" id="zoomControl">
+          <button class="tool-button" id="zoomToggle" type="button" data-action="toggle-zoom" aria-label="缩放" title="缩放" aria-expanded="false" aria-pressed="false" aria-controls="zoomPanel">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 4.5 4.5"></path></svg><span>缩放</span>
+          </button>
+          <div class="zoom-panel" id="zoomPanel" role="group" aria-label="图片缩放" hidden>
+            <button class="zoom-button" id="zoomOut" type="button" data-action="zoom-out" aria-label="缩小" title="缩小">−</button>
+            <output class="zoom-value" id="zoomValue" aria-live="polite">100%</output>
+            <button class="zoom-button" id="zoomIn" type="button" data-action="zoom-in" aria-label="放大" title="放大">＋</button>
+            <button class="zoom-reset" type="button" data-action="zoom-reset">重置</button>
+          </div>
+        </div>
         <button class="tool-button" type="button" data-action="toggle-theme" aria-label="明暗" title="明暗">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"></path></svg><span>明暗</span>
         </button>

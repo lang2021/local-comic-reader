@@ -2,6 +2,17 @@
   "use strict";
 
   const STORAGE_KEY = "local-comic-reader.progress.v1";
+  const ZOOM_MIN = 100;
+  const ZOOM_MAX = 300;
+  const ZOOM_STEP = 25;
+
+  function readZoom() {
+    const stored = Number(localStorage.getItem(`${STORAGE_KEY}.zoom`));
+    return Number.isInteger(stored) && stored >= ZOOM_MIN && stored <= ZOOM_MAX && stored % ZOOM_STEP === 0
+      ? stored
+      : ZOOM_MIN;
+  }
+
   const refs = {
     body: document.body,
     stage: document.getElementById("readerStage"),
@@ -21,6 +32,12 @@
     chapterCount: document.getElementById("chapterCount"),
     libraryToggle: document.getElementById("libraryToggle"),
     emptyOpenLibrary: document.getElementById("emptyOpenLibrary"),
+    zoomControl: document.getElementById("zoomControl"),
+    zoomToggle: document.getElementById("zoomToggle"),
+    zoomPanel: document.getElementById("zoomPanel"),
+    zoomOut: document.getElementById("zoomOut"),
+    zoomIn: document.getElementById("zoomIn"),
+    zoomValue: document.getElementById("zoomValue"),
     messageLayer: document.getElementById("messageLayer"),
     messageTitle: document.getElementById("messageTitle"),
     messageBody: document.getElementById("messageBody"),
@@ -35,6 +52,7 @@
     chapter: null,
     mode: localStorage.getItem(`${STORAGE_KEY}.mode`) || "long",
     theme: localStorage.getItem(`${STORAGE_KEY}.theme`) || "dark",
+    zoom: readZoom(),
     activeIndex: 0,
     observer: null,
     drawerSeries: null,
@@ -109,6 +127,64 @@
     refs.body.classList.toggle("theme-light", state.theme === "light");
     refs.body.classList.toggle("theme-dark", state.theme !== "light");
     localStorage.setItem(`${STORAGE_KEY}.theme`, state.theme);
+  }
+
+  function setZoomPanel(open) {
+    refs.zoomPanel.hidden = !open;
+    refs.zoomToggle.setAttribute("aria-expanded", String(open));
+  }
+
+  function captureZoomAnchor() {
+    const stageRect = refs.stage.getBoundingClientRect();
+    const image = state.mode === "single"
+      ? refs.singleCanvas.querySelector("img")
+      : refs.longCanvas.querySelector(`[data-page="${state.activeIndex}"]`);
+    const imageRect = image?.getBoundingClientRect();
+    const imageRatio = imageRect && imageRect.height > 0
+      ? (stageRect.top + stageRect.height / 2 - imageRect.top) / imageRect.height
+      : null;
+    const scrollWidth = Math.max(refs.stage.scrollWidth, refs.stage.clientWidth);
+    return {
+      image,
+      imageRatio,
+      horizontalRatio: (refs.stage.scrollLeft + refs.stage.clientWidth / 2) / scrollWidth,
+      verticalScroll: refs.stage.scrollTop,
+    };
+  }
+
+  function restoreZoomAnchor(anchor) {
+    if (!anchor) return;
+    const stageRect = refs.stage.getBoundingClientRect();
+    const imageRect = anchor.image?.isConnected ? anchor.image.getBoundingClientRect() : null;
+    if (imageRect && anchor.imageRatio !== null && imageRect.height > 0) {
+      const imagePoint = imageRect.top + imageRect.height * anchor.imageRatio;
+      refs.stage.scrollTop += imagePoint - (stageRect.top + stageRect.height / 2);
+    } else {
+      refs.stage.scrollTop = anchor.verticalScroll;
+    }
+    refs.stage.scrollLeft = Math.max(
+      0,
+      anchor.horizontalRatio * Math.max(refs.stage.scrollWidth, refs.stage.clientWidth) - refs.stage.clientWidth / 2,
+    );
+  }
+
+  function applyZoom(preserveAnchor = false) {
+    const anchor = preserveAnchor ? captureZoomAnchor() : null;
+    refs.reader.style.setProperty("--reader-zoom", String(state.zoom / 100));
+    refs.zoomValue.textContent = `${state.zoom}%`;
+    refs.zoomOut.disabled = state.zoom <= ZOOM_MIN;
+    refs.zoomIn.disabled = state.zoom >= ZOOM_MAX;
+    refs.zoomToggle.classList.toggle("is-selected", state.zoom > ZOOM_MIN);
+    refs.zoomToggle.setAttribute("aria-pressed", String(state.zoom > ZOOM_MIN));
+    localStorage.setItem(`${STORAGE_KEY}.zoom`, String(state.zoom));
+    if (anchor) requestAnimationFrame(() => restoreZoomAnchor(anchor));
+  }
+
+  function setZoom(value) {
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, Math.round(value / ZOOM_STEP) * ZOOM_STEP));
+    if (next === state.zoom) return;
+    state.zoom = next;
+    applyZoom(true);
   }
 
   function setDrawer(open) {
@@ -419,6 +495,10 @@
     if (action === "open-library") setDrawer(true);
     if (action === "close-library") setDrawer(false);
     if (action === "toggle-theme") setTheme(state.theme === "dark" ? "light" : "dark");
+    if (action === "toggle-zoom") setZoomPanel(refs.zoomPanel.hidden);
+    if (action === "zoom-in") setZoom(state.zoom + ZOOM_STEP);
+    if (action === "zoom-out") setZoom(state.zoom - ZOOM_STEP);
+    if (action === "zoom-reset") setZoom(ZOOM_MIN);
     if (action === "mode-long") { state.mode = "long"; localStorage.setItem(`${STORAGE_KEY}.mode`, state.mode); renderReader(); }
     if (action === "mode-single") { state.mode = "single"; localStorage.setItem(`${STORAGE_KEY}.mode`, state.mode); renderReader(); }
     if (action === "previous-chapter") moveChapter(-1);
@@ -426,6 +506,7 @@
   }
 
   document.addEventListener("click", (event) => {
+    if (!event.target.closest("#zoomControl")) setZoomPanel(false);
     const target = event.target.closest("[data-action]");
     if (target) handleAction(target.dataset.action);
   });
@@ -443,6 +524,11 @@
   });
   refs.messageDismiss.addEventListener("click", hideMessage);
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !refs.zoomPanel.hidden) {
+      setZoomPanel(false);
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Escape" && !refs.drawerLayer.hidden) setDrawer(false);
     if (event.key === "ArrowLeft") movePage(-1);
     if (event.key === "ArrowRight") movePage(1);
@@ -451,5 +537,6 @@
   });
 
   setTheme(state.theme);
+  applyZoom();
   loadLibrary();
 })();

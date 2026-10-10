@@ -85,10 +85,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .reader-stage::-webkit-scrollbar-thumb, .drawer-content::-webkit-scrollbar-thumb, .series-list::-webkit-scrollbar-thumb, .chapter-list::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
 
 .reader { width: 100%; padding: 0 96px 120px; }
-.long-canvas { width: min(100%, 820px); display: block; margin: 0 auto; padding: 0; gap: 0; line-height: 0; }
+.long-canvas { width: min(100%, 820px); display: block; margin: 0 auto; padding: 0; gap: 0; line-height: 0; zoom: var(--reader-zoom, 1); }
 .long-canvas img { display: block; width: 100%; height: auto; margin: 0; padding: 0; border: 0; vertical-align: top; background: #111; }
 .single-canvas { width: min(100%, 920px); min-height: calc(100vh - 100px); display: flex; align-items: flex-start; justify-content: center; margin: 0 auto; padding: 22px 0 80px; }
-.single-canvas img { display: block; max-width: 100%; max-height: calc(100vh - 120px); width: auto; height: auto; object-fit: contain; background: #111; }
+.single-canvas img { display: block; max-width: 100%; max-height: calc(100vh - 120px); width: auto; height: auto; object-fit: contain; background: #111; zoom: var(--reader-zoom, 1); }
 .single-canvas img.is-broken { padding: 56px; color: var(--muted); border: 1px solid var(--line); }
 .chapter-end-nav { width: min(100%, 360px); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; margin: 36px auto 0; padding: 6px; border-radius: 18px; background: var(--toolbar-bg); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 .chapter-end-button { min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 12px; padding: 8px 18px; color: var(--text); background: transparent; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; letter-spacing: .02em; text-align: center; }
@@ -122,6 +122,15 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .tool-button svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
 .tool-button:hover, .tool-button.is-selected { color: var(--accent); background: var(--accent-soft); }
 .tool-button:disabled { opacity: .32; cursor: not-allowed; }
+.zoom-control { position: relative; }
+.zoom-control > .tool-button { width: 64px; }
+.zoom-panel { position: absolute; z-index: 2; top: 50%; right: calc(100% + 12px); display: grid; grid-template-columns: 38px 58px 38px auto; align-items: center; gap: 4px; min-width: 218px; padding: 8px; border: 1px solid var(--line); border-radius: 16px; background: var(--toolbar-bg); box-shadow: 0 12px 30px rgba(0, 0, 0, .24); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transform: translateY(-50%); }
+.zoom-button, .zoom-reset { min-height: 38px; border: 0; border-radius: 10px; color: var(--text); background: transparent; cursor: pointer; font: inherit; }
+.zoom-button { font-size: 22px; line-height: 1; }
+.zoom-button:hover:not(:disabled), .zoom-button:focus-visible, .zoom-reset:hover, .zoom-reset:focus-visible { color: var(--accent); background: var(--accent-soft); }
+.zoom-button:disabled { color: var(--muted); opacity: .35; cursor: not-allowed; }
+.zoom-value { min-width: 58px; color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.zoom-reset { padding: 0 10px; color: var(--muted); font-size: 11px; }
 .icon-button { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; }
 .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .icon-button:hover { color: var(--text); background: var(--surface-soft); }
@@ -182,9 +191,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   .chapter-end-nav { width: calc(100% - 24px); margin-top: 24px; padding: 4px; border-radius: 16px; }
   .chapter-end-button { min-height: 62px; padding: 6px 8px; border-radius: 11px; font-size: 11px; }
   .chapter-end-button svg { width: 24px; height: 24px; }
-  .reader-toolbar { top: auto; right: 10px; bottom: 12px; left: 10px; flex-direction: row; justify-content: center; transform: none; padding: 3px; border-radius: 14px; }
-  .tool-button { width: 52px; min-height: 52px; font-size: 10px; }
+  .reader-toolbar { top: auto; right: 10px; bottom: 12px; left: 10px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 1px; transform: none; padding: 3px; border-radius: 14px; }
+  .tool-button, .zoom-control > .tool-button { width: 100%; min-width: 0; min-height: 52px; font-size: 10px; }
   .tool-button svg { width: 21px; height: 21px; }
+  .zoom-panel { top: auto; right: auto; bottom: calc(100% + 10px); left: 50%; grid-template-columns: 38px 58px 38px auto; width: min(252px, calc(100vw - 24px)); transform: translateX(-50%); }
   .empty-state { padding-top: 18vh; }
 }
 
