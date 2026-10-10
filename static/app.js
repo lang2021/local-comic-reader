@@ -168,6 +168,23 @@
     );
   }
 
+  function readerContentWidth() {
+    const styles = getComputedStyle(refs.reader);
+    const padding = Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
+    return Math.max(0, refs.reader.clientWidth - padding);
+  }
+
+  function updateSingleZoomLayout() {
+    const image = refs.singleCanvas.querySelector("img");
+    if (!image || image.classList.contains("is-broken") || !image.naturalWidth || !image.naturalHeight) return;
+    const canvasWidth = Math.min(920, readerContentWidth() || refs.stage.clientWidth);
+    const maxHeight = Math.max(1, window.innerHeight - 120);
+    const fit = Math.min(1, canvasWidth / image.naturalWidth, maxHeight / image.naturalHeight);
+    const baseWidth = image.naturalWidth * fit;
+    image.style.setProperty("--reader-base-width", `${baseWidth}px`);
+    refs.singleCanvas.style.width = `${Math.max(canvasWidth, baseWidth * state.zoom / 100)}px`;
+  }
+
   function applyZoom(preserveAnchor = false) {
     const anchor = preserveAnchor ? captureZoomAnchor() : null;
     refs.reader.style.setProperty("--reader-zoom", String(state.zoom / 100));
@@ -177,6 +194,7 @@
     refs.zoomToggle.classList.toggle("is-selected", state.zoom > ZOOM_MIN);
     refs.zoomToggle.setAttribute("aria-pressed", String(state.zoom > ZOOM_MIN));
     localStorage.setItem(`${STORAGE_KEY}.zoom`, String(state.zoom));
+    if (state.mode === "single") updateSingleZoomLayout();
     if (anchor) requestAnimationFrame(() => restoreZoomAnchor(anchor));
   }
 
@@ -354,9 +372,14 @@
     refs.longCanvas.replaceChildren();
     refs.singleCanvas.replaceChildren();
     const image = state.chapter?.images?.[state.activeIndex];
-    if (image) refs.singleCanvas.append(imageElement(image, state.chapter.title));
+    if (image) {
+      const node = imageElement(image, state.chapter.title);
+      node.addEventListener("load", updateSingleZoomLayout);
+      refs.singleCanvas.append(node);
+    }
     refs.longCanvas.classList.add("hidden");
     refs.singleCanvas.classList.remove("hidden");
+    updateSingleZoomLayout();
     updateCounter();
   }
 
@@ -534,6 +557,9 @@
     if (event.key === "ArrowRight") movePage(1);
     if (event.key === "PageUp") { event.preventDefault(); refs.stage.scrollBy({ top: -refs.stage.clientHeight * .85, behavior: "smooth" }); }
     if (event.key === "PageDown") { event.preventDefault(); refs.stage.scrollBy({ top: refs.stage.clientHeight * .85, behavior: "smooth" }); }
+  });
+  window.addEventListener("resize", () => {
+    if (state.mode === "single") updateSingleZoomLayout();
   });
 
   setTheme(state.theme);
