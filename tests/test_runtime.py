@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import threading
 import urllib.request
@@ -31,6 +32,16 @@ class RuntimeHealthTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+class FrontendRequestContractTests(unittest.TestCase):
+    def test_folder_picker_uses_a_timeout_longer_than_the_native_dialog(self) -> None:
+        source = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        match = re.search(r"const FOLDER_PICKER_TIMEOUT_MS = (\d+);", source)
+        self.assertIsNotNone(match, "文件夹选择器必须使用独立的长超时")
+        self.assertGreater(int(match.group(1)), 120_000)
+        self.assertIn("timeoutMs: FOLDER_PICKER_TIMEOUT_MS", source)
+        self.assertIn("window.setTimeout(() => controller.abort(), timeoutMs)", source)
 
 
 if __name__ == "__main__":

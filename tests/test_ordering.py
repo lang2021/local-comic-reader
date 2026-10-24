@@ -15,7 +15,13 @@ import app  # noqa: E402
 class LibraryOrderingRegressionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls.original_root = app.MANGA_ROOT
+        app.set_library_root(app.DEFAULT_MANGA_ROOT, persist=False)
         cls.library = app.scan_library()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        app.set_library_root(cls.original_root, persist=False)
 
     def _series(self, name: str) -> dict:
         return next(series for series in self.library["series"] if series["name"] == name)
@@ -48,6 +54,15 @@ class LibraryOrderingRegressionTests(unittest.TestCase):
     def test_prologues_precede_main_story(self) -> None:
         series = self._series("我独自升级")
         self.assertTrue(series["chapters"][0]["folder"].startswith("我独自升级_序章_"))
+
+    def test_title_only_series_does_not_invent_chapter_prefix(self) -> None:
+        title, number = app.display_title(
+            "夏日重来（夏のヤリなおし）",
+            "夏日重来1-4合集篇（夏のヤリなおし）",
+            "main",
+        )
+        self.assertEqual(title, "夏日重来1-4合集篇（夏のヤリなおし）")
+        self.assertIsNone(number)
 
 
 if __name__ == "__main__":

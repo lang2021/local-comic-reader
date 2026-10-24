@@ -20,7 +20,12 @@
           <span class="heading-separator" aria-hidden="true">·</span>
           <span id="chapterHeading">打开目录开始阅读</span>
         </div>
-        <div class="page-counter" id="pageCounter">— / —</div>
+        <div class="topbar-actions">
+          <div class="page-counter" id="pageCounter">— / —</div>
+          <button class="topbar-button" type="button" data-action="open-settings" aria-label="设置" title="设置" aria-expanded="false" aria-controls="settingsLayer">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z"></path><path d="m19.1 13.4 1.4 1.1-1.7 2.9-1.7-.7a7.6 7.6 0 0 1-1.7 1l-.3 1.8h-3.4l-.3-1.8a7.6 7.6 0 0 1-1.7-1l-1.7.7-1.7-2.9 1.4-1.1a7.3 7.3 0 0 1 0-2l-1.4-1.1L8 7.4l1.7.7a7.6 7.6 0 0 1 1.7-1l.3-1.8h3.4l.3 1.8a7.6 7.6 0 0 1 1.7 1l1.7-.7 1.7 2.9-1.4 1.1a7.3 7.3 0 0 1 0 2Z"></path></svg>
+          </button>
+        </div>
       </header>
 
       <main class="reader-stage" id="readerStage">
@@ -49,6 +54,9 @@
         <button class="tool-button" type="button" data-action="open-library" aria-label="目录" title="目录">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5.5h14v4H5zM5 14.5h14v4H5z"></path></svg><span>目录</span>
         </button>
+        <button class="tool-button" type="button" data-action="open-history" aria-label="历史" title="历史" aria-expanded="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 5.5v5h5"></path><path d="M12 8v4l2.8 1.7"></path></svg><span>历史</span>
+        </button>
         <button class="tool-button is-selected" type="button" data-action="mode-long" aria-label="长卷" title="长卷">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16H7zM10 8h4M10 12h4M10 16h4"></path></svg><span>长卷</span>
         </button>
@@ -75,6 +83,9 @@
         <button class="tool-button" type="button" data-action="next-chapter" aria-label="下一话" title="下一话">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"></path></svg><span>下一话</span>
         </button>
+        <button class="tool-button" type="button" data-action="scroll-top" aria-label="回到开头" title="回到开头">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10 12 4l6 6M12 4v16"></path></svg><span>开头</span>
+        </button>
       </nav>
 
       <div class="drawer-layer" id="drawerLayer" hidden>
@@ -97,6 +108,57 @@
             </div>
           </div>
         </aside>
+      </div>
+
+      <div class="history-layer" id="historyLayer" hidden>
+        <div class="drawer-backdrop" data-action="close-history"></div>
+        <aside class="history-drawer" aria-label="阅读历史" aria-labelledby="historyTitle">
+          <header class="drawer-header">
+            <div>
+              <p class="drawer-kicker">阅读记录</p>
+              <h2 id="historyTitle">阅读历史</h2>
+            </div>
+            <button class="icon-button" type="button" data-action="close-history" aria-label="关闭历史" title="关闭历史">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+          </header>
+          <div class="history-content">
+            <div class="history-heading"><span>最近阅读</span><span class="panel-count" id="historyCount"></span></div>
+            <div class="history-list" id="historyList"></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="settings-layer" id="settingsLayer" hidden>
+        <div class="settings-backdrop" data-action="close-settings"></div>
+        <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+          <header class="settings-header">
+            <div>
+              <p class="drawer-kicker">阅读器设置</p>
+              <h2 id="settingsTitle">设置</h2>
+            </div>
+            <button class="icon-button" type="button" data-action="close-settings" aria-label="关闭设置" title="关闭设置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+            </button>
+          </header>
+          <div class="settings-content">
+            <div class="settings-section">
+              <div class="settings-section-heading">
+                <div>
+                  <h3>漫画资料库</h3>
+                  <p>扫描所选文件夹及下一层作品目录。</p>
+                </div>
+                <span class="settings-status" id="settingsStatus">读取中</span>
+              </div>
+              <div class="settings-path" id="settingsPath">—</div>
+              <p class="settings-error" id="settingsError" hidden></p>
+              <div class="settings-actions">
+                <button class="settings-button settings-button-primary" type="button" data-action="choose-library">选择文件夹</button>
+                <button class="settings-button" type="button" data-action="reset-library">恢复默认目录</button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       <div class="message-layer" id="messageLayer" hidden>

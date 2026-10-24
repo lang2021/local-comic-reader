@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import csv
 import contextlib
+import hashlib
 import mimetypes
 import os
 import re
@@ -28,9 +29,11 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-MANGA_ROOT = (PROJECT_ROOT.parent / "漫画").resolve()
+DEFAULT_MANGA_ROOT = (PROJECT_ROOT.parent / "漫画").resolve()
 STATIC_ROOT = (PROJECT_ROOT / "static").resolve()
 ORDER_MANIFEST = (PROJECT_ROOT / "data" / "library_order.tsv").resolve()
+SETTINGS_ROOT = (PROJECT_ROOT / ".config").resolve()
+SETTINGS_FILE = (SETTINGS_ROOT / "settings.json").resolve()
 RUNTIME_ROOT = (PROJECT_ROOT / ".runtime").resolve()
 RUNTIME_STATE = RUNTIME_ROOT / "reader.json"
 RUNTIME_LOG = RUNTIME_ROOT / "reader.log"
@@ -39,14 +42,75 @@ APP_ID = "local-comic-reader"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}
 APPENDIX_MARKERS = ("非剧情", "上架感言", "周日更新", "外出取材", "更新延迟", "本周休刊", "通知")
 SERIES_ORDER_HINTS = ("史上最强", "败者为寇", "我独自升级")
+# These folders use meaningful digits in their titles, not chapter numbers.
+# Keep the title literal in the UI while retaining natural numeric sorting.
+TITLE_ONLY_SERIES = {"夏日重来（夏のヤリなおし）"}
 EXPLICIT_CHAPTER_RE = re.compile(r"第(\d{1,4}(?:\.\d+)?)话")
 EXPLICIT_ORDER_RE = re.compile(r"^(?P<prefix>[SA])(?P<number>\d{4}(?:\.\d+)?)_")
 ORDER_TYPE_RE = re.compile(r"^[SA]\d{4}(?:\.\d+)?_(?P<kind>序章|正篇|特别篇|附录)_")
 ORDER_KIND_MAP = {"prologue": "prologue", "main": "main", "special": "special", "appendix": "appendix"}
 
 _cache_lock = threading.Lock()
+_settings_lock = threading.RLock()
 _library_cache: dict[str, Any] | None = None
 _library_signature: tuple[Any, ...] | None = None
+
+
+def canonical_path(value: str | Path) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def read_library_root() -> Path:
+    try:
+        payload = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return DEFAULT_MANGA_ROOT
+    configured = payload.get("libraryRoot") if isinstance(payload, dict) else None
+    return canonical_path(configured) if isinstance(configured, str) and configured.strip() else DEFAULT_MANGA_ROOT
+
+
+MANGA_ROOT = read_library_root()
+
+
+def library_id(root: Path | None = None) -> str:
+    selected = canonical_path(root or MANGA_ROOT)
+    return hashlib.sha256(str(selected).encode("utf-8")).hexdigest()[:16]
+
+
+def current_settings() -> dict[str, Any]:
+    with _settings_lock:
+        root = canonical_path(MANGA_ROOT)
+    available = root.is_dir()
+    return {
+        "version": 1,
+        "libraryRoot": str(root),
+        "libraryName": root.name or str(root),
+        "libraryId": library_id(root),
+        "isDefault": root == DEFAULT_MANGA_ROOT,
+        "available": available,
+        "hasImages": has_library_images(root) if available else False,
+    }
+
+
+def write_library_root(root: Path) -> None:
+    atomic_write_json(SETTINGS_FILE, {"version": 1, "libraryRoot": str(root)})
+
+
+def set_library_root(root: Path, persist: bool = True) -> None:
+    global MANGA_ROOT, _library_cache, _library_signature
+    selected = canonical_path(root)
+    with _settings_lock:
+        MANGA_ROOT = selected
+        if persist:
+            write_library_root(selected)
+    with _cache_lock:
+        _library_cache = None
+        _library_signature = None
+
+
+def manifest_path_for_root(root: Path | None = None) -> Path | None:
+    selected = canonical_path(root or MANGA_ROOT)
+    return ORDER_MANIFEST if selected == DEFAULT_MANGA_ROOT else None
 
 
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -199,10 +263,11 @@ def clean_ordered_title(series_name: str, folder_name: str) -> str:
 def load_order_manifest() -> tuple[dict[tuple[str, str], dict[str, str]], list[str]]:
     rows: dict[tuple[str, str], dict[str, str]] = {}
     warnings: list[str] = []
-    if not ORDER_MANIFEST.is_file():
+    manifest_path = manifest_path_for_root()
+    if manifest_path is None or not manifest_path.is_file():
         return rows, warnings
     try:
-        with ORDER_MANIFEST.open("r", encoding="utf-8", newline="") as handle:
+        with manifest_path.open("r", encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle, delimiter="\t")
             required = {"series", "order_key", "kind", "folder", "title", "note"}
             if not reader.fieldnames or not required.issubset(reader.fieldnames):
@@ -256,6 +321,35 @@ def direct_images(chapter_dir: Path) -> list[Path]:
         if is_safe_regular_file(child)
     ]
     return sorted(images, key=lambda path: natural_key(path.name))
+
+
+def iter_chapter_dirs(root: Path | None = None) -> list[Path]:
+    """Find chapter directories at the root or one level below a series folder."""
+    selected_root = canonical_path(root or MANGA_ROOT)
+    if not selected_root.exists() or not selected_root.is_dir():
+        return []
+    found: list[Path] = []
+    for child in sorted(selected_root.iterdir(), key=lambda item: item.name.casefold()):
+        if not child.is_dir() or child.is_symlink() or child.name.startswith("."):
+            continue
+        if direct_images(child):
+            found.append(child)
+            continue
+        for nested in sorted(child.iterdir(), key=lambda item: item.name.casefold()):
+            if nested.is_dir() and not nested.is_symlink() and not nested.name.startswith(".") and direct_images(nested):
+                found.append(nested)
+    return found
+
+
+def has_library_images(root: Path | None = None) -> bool:
+    return any(direct_images(chapter_dir) for chapter_dir in iter_chapter_dirs(root))
+
+
+def chapter_series_name(chapter_dir: Path) -> str:
+    """Use the parent folder as the series name for grouped storage."""
+    if chapter_dir.parent == canonical_path(MANGA_ROOT):
+        return chapter_dir.name.split("_", 1)[0]
+    return chapter_dir.parent.name
 
 
 def root_contained(path: Path, root: Path) -> bool:
@@ -343,6 +437,8 @@ def display_title(series_name: str, folder_name: str, kind: str) -> tuple[str, s
     """Return a compact UI title and the raw numeric chapter token."""
     rest = chapter_rest(series_name, folder_name)
     body = without_archive_index(rest)
+    if series_name in TITLE_ONLY_SERIES:
+        return rest.replace("_", " · "), None
     explicit = EXPLICIT_CHAPTER_RE.search(body)
     if explicit:
         raw_number = explicit.group(1)
@@ -393,27 +489,37 @@ def chapter_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def directory_signature() -> tuple[Any, ...]:
-    if not MANGA_ROOT.exists() or not MANGA_ROOT.is_dir():
+    root = canonical_path(MANGA_ROOT)
+    if not root.exists() or not root.is_dir():
         return ("missing",)
-    values: list[Any] = [MANGA_ROOT.stat().st_mtime_ns]
-    if ORDER_MANIFEST.exists():
+    values: list[Any] = [str(root), root.stat().st_mtime_ns]
+    manifest_path = manifest_path_for_root(root)
+    if manifest_path is not None and manifest_path.exists():
         try:
-            values.append(("order-manifest", ORDER_MANIFEST.stat().st_mtime_ns, ORDER_MANIFEST.stat().st_size))
+            values.append(("order-manifest", manifest_path.stat().st_mtime_ns, manifest_path.stat().st_size))
         except OSError:
             values.append(("order-manifest", "unreadable"))
     else:
         values.append(("order-manifest", "missing"))
-    for child in sorted(MANGA_ROOT.iterdir(), key=lambda item: item.name.casefold()):
-        if child.is_dir() and not child.is_symlink():
-            try:
-                values.append((child.name, child.stat().st_mtime_ns))
-            except OSError:
-                continue
+    for child in sorted(root.iterdir(), key=lambda item: item.name.casefold()):
+        if not child.is_dir() or child.is_symlink():
+            continue
+        try:
+            values.append((child.name, child.stat().st_mtime_ns))
+        except OSError:
+            continue
+        for nested in sorted(child.iterdir(), key=lambda item: item.name.casefold()):
+            if nested.is_dir() and not nested.is_symlink():
+                try:
+                    values.append((f"{child.name}/{nested.name}", nested.stat().st_mtime_ns))
+                except OSError:
+                    continue
     return tuple(values)
 
 
 def scan_library() -> dict[str, Any]:
     global _library_cache, _library_signature
+    root = canonical_path(MANGA_ROOT)
     signature = directory_signature()
     with _cache_lock:
         if _library_cache is not None and signature == _library_signature:
@@ -422,14 +528,10 @@ def scan_library() -> dict[str, Any]:
         manifest, manifest_warnings = load_order_manifest()
         grouped: dict[str, list[dict[str, Any]]] = {}
         unindexed: dict[str, list[dict[str, Any]]] = {}
-        if MANGA_ROOT.exists() and MANGA_ROOT.is_dir():
-            for chapter_dir in MANGA_ROOT.iterdir():
-                if not chapter_dir.is_dir() or chapter_dir.is_symlink() or chapter_dir.name.startswith("."):
-                    continue
+        if root.exists() and root.is_dir():
+            for chapter_dir in iter_chapter_dirs(root):
                 images = direct_images(chapter_dir)
-                if not images:
-                    continue
-                series_name = chapter_dir.name.split("_", 1)[0]
+                series_name = chapter_series_name(chapter_dir)
                 manifest_row = manifest.get((series_name, chapter_dir.name))
                 folder_order = order_from_folder(series_name, chapter_dir.name)
                 order_key: str | None = None
@@ -463,8 +565,9 @@ def scan_library() -> dict[str, Any]:
                     label, raw_number = display_title(series_name, chapter_dir.name, group_kind(chapter_dir.name))
 
                 entry = {
-                    "id": chapter_dir.name,
+                    "id": chapter_dir.relative_to(root).as_posix(),
                     "folder": chapter_dir.name,
+                    "relativePath": chapter_dir.relative_to(root).as_posix(),
                     "series": series_name,
                     "kind": kind,
                     "title": label,
@@ -502,7 +605,7 @@ def scan_library() -> dict[str, Any]:
                     "totalImages": sum(item["images"] for item in chapters) + sum(item["images"] for item in pending),
                 }
             )
-        _library_cache = {"series": series, "warnings": manifest_warnings}
+        _library_cache = {"libraryId": library_id(root), "series": series, "warnings": manifest_warnings}
         _library_signature = signature
         return _library_cache
 
@@ -521,11 +624,12 @@ def chapter_response(chapter_id: str) -> dict[str, Any] | None:
     if found is None:
         return None
     series, item = found
-    chapter_dir = MANGA_ROOT / item["folder"]
+    root = canonical_path(MANGA_ROOT)
+    chapter_dir = root / item.get("relativePath", item["folder"])
     images = direct_images(chapter_dir)
     payload = []
     for index, image in enumerate(images):
-        relative = image.relative_to(MANGA_ROOT).as_posix()
+        relative = image.relative_to(root).as_posix()
         payload.append(
             {
                 "name": image.name,
@@ -535,6 +639,7 @@ def chapter_response(chapter_id: str) -> dict[str, Any] | None:
         )
     return {
         "id": item["id"],
+        "libraryId": library_id(root),
         "series": series["name"],
         "title": item["title"],
         "kind": item["kind"],
@@ -552,18 +657,17 @@ def validate_order_manifest() -> tuple[list[str], list[str]]:
     actual: set[tuple[str, str]] = set()
     order_keys: set[tuple[str, str, str]] = set()
 
-    if not ORDER_MANIFEST.is_file():
+    manifest_path = manifest_path_for_root()
+    if manifest_path is None:
+        # Custom roots are validated through explicit S/A folder prefixes.
+        pass
+    elif not manifest_path.is_file():
         errors.append(f"缺少顺序清单：{ORDER_MANIFEST}")
 
-    for series_name in sorted({
-        child.name.split("_", 1)[0]
-        for child in MANGA_ROOT.iterdir()
-        if child.is_dir() and not child.is_symlink() and not child.name.startswith(".") and direct_images(child)
-    }):
-        for chapter_dir in sorted(MANGA_ROOT.iterdir(), key=lambda item: item.name.casefold()):
-            if not chapter_dir.is_dir() or chapter_dir.is_symlink() or chapter_dir.name.startswith("."):
-                continue
-            if chapter_dir.name.split("_", 1)[0] != series_name or not direct_images(chapter_dir):
+    chapter_dirs = iter_chapter_dirs()
+    for series_name in sorted({chapter_series_name(chapter_dir) for chapter_dir in chapter_dirs}):
+        for chapter_dir in sorted(chapter_dirs, key=lambda item: item.as_posix().casefold()):
+            if chapter_series_name(chapter_dir) != series_name:
                 continue
             key = (series_name, chapter_dir.name)
             actual.add(key)
@@ -605,6 +709,32 @@ def json_bytes(payload: Any) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def choose_library_root() -> tuple[Path | None, str | None]:
+    """Open the macOS folder picker without accepting a path from the browser."""
+    script = 'POSIX path of (choose folder with prompt "选择漫画根目录")'
+    try:
+        result = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"无法打开系统文件夹选择器：{exc}"
+    if result.returncode != 0:
+        return None, "cancelled"
+    selected_text = result.stdout.strip()
+    if not selected_text:
+        return None, "未选择文件夹"
+    selected = canonical_path(selected_text)
+    if not selected.is_dir():
+        return None, "选择的路径不是可用文件夹"
+    if not has_library_images(selected):
+        return None, "该文件夹下没有发现可读取的漫画图片目录"
+    return selected, None
+
+
 class ReaderServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -622,6 +752,7 @@ class ReaderServer(ThreadingHTTPServer):
             "pid": os.getpid(),
             "host": host,
             "port": port,
+            "libraryId": library_id(),
         }
 
 
@@ -653,6 +784,9 @@ class ReaderHandler(BaseHTTPRequestHandler):
         if route == "/health":
             self.respond(HTTPStatus.OK, json_bytes(self.server.health_payload()), "application/json; charset=utf-8")
             return
+        if route == "/api/settings":
+            self.respond(HTTPStatus.OK, json_bytes(current_settings()))
+            return
         if route == "/api/library":
             self.respond(HTTPStatus.OK, json_bytes(scan_library()))
             return
@@ -677,7 +811,43 @@ class ReaderHandler(BaseHTTPRequestHandler):
         self.respond(HTTPStatus.METHOD_NOT_ALLOWED, json_bytes({"error": "只支持 GET"}))
 
     def do_POST(self) -> None:
-        self.respond(HTTPStatus.METHOD_NOT_ALLOWED, json_bytes({"error": "只支持 GET"}))
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path != "/api/settings/library":
+            self.respond(HTTPStatus.METHOD_NOT_ALLOWED, json_bytes({"error": "只支持 GET"}))
+            return
+        if self.headers.get("X-Reader-Instance") != self.server.instance_id:
+            self.respond(HTTPStatus.FORBIDDEN, json_bytes({"error": "无效的阅读器实例"}))
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = -1
+        if content_length < 0 or content_length > 4096:
+            self.respond(HTTPStatus.BAD_REQUEST, json_bytes({"error": "请求体无效"}))
+            return
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8") or "{}")
+        except (OSError, UnicodeDecodeError, ValueError):
+            self.respond(HTTPStatus.BAD_REQUEST, json_bytes({"error": "请求体不是有效JSON"}))
+            return
+        action = payload.get("action") if isinstance(payload, dict) else None
+        if action == "choose":
+            selected, error = choose_library_root()
+            if error == "cancelled":
+                self.respond(HTTPStatus.OK, json_bytes({"cancelled": True, "settings": current_settings()}))
+                return
+            if error:
+                self.respond(HTTPStatus.UNPROCESSABLE_ENTITY, json_bytes({"error": error}))
+                return
+            assert selected is not None
+            set_library_root(selected)
+            self.respond(HTTPStatus.OK, json_bytes({"cancelled": False, "settings": current_settings()}))
+            return
+        if action == "reset":
+            set_library_root(DEFAULT_MANGA_ROOT)
+            self.respond(HTTPStatus.OK, json_bytes({"cancelled": False, "settings": current_settings()}))
+            return
+        self.respond(HTTPStatus.BAD_REQUEST, json_bytes({"error": "不支持的设置操作"}))
 
     def do_PUT(self) -> None:
         self.respond(HTTPStatus.METHOD_NOT_ALLOWED, json_bytes({"error": "只支持 GET"}))
@@ -710,13 +880,16 @@ class ReaderHandler(BaseHTTPRequestHandler):
         if not relative or "\x00" in relative:
             self.respond(HTTPStatus.BAD_REQUEST, json_bytes({"error": "非法媒体路径"}))
             return
-        candidate = (MANGA_ROOT / relative).resolve()
-        if not root_contained(candidate, MANGA_ROOT) or not is_safe_regular_file(candidate):
+        root = canonical_path(MANGA_ROOT)
+        candidate = (root / relative).resolve()
+        if not root_contained(candidate, root) or not is_safe_regular_file(candidate):
             self.respond(HTTPStatus.NOT_FOUND, json_bytes({"error": "图片不存在"}))
             return
         try:
             chapter_dir = candidate.parent
-            if chapter_dir.parent != MANGA_ROOT or chapter_dir.is_symlink():
+            if chapter_dir.is_symlink() or not direct_images(chapter_dir):
+                raise FileNotFoundError
+            if chapter_dir.parent != root and chapter_dir.parent.parent != root:
                 raise FileNotFoundError
             if candidate not in direct_images(chapter_dir):
                 raise FileNotFoundError
@@ -743,9 +916,6 @@ def choose_server() -> ReaderServer:
 
 
 def serve_background() -> None:
-    if not MANGA_ROOT.exists():
-        print(f"找不到漫画目录：{MANGA_ROOT}", file=sys.stderr)
-        raise SystemExit(2)
     server = choose_server()
     write_runtime_state(server)
 
